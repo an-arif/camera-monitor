@@ -8,7 +8,9 @@ from flask import Flask
 
 # ================= CONFIGURATION =================
 ELECTION_URL = "https://klop.electionpoll.live/"
-NTFY_URL = "https://ntfy.sh/Cam_Down_Alert_v2" 
+
+# Your exact Discord Webhook
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1491694602661662801/Pzp_kfOVyxObEqGYbXQN7yZLHoLfS_PKydkKJh2SwbrQ63fIam9imdHYtPdJd2sY9SBM"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -30,6 +32,16 @@ def log(message):
     if len(terminal_logs) > 50:
         terminal_logs.pop(0)
 
+def send_discord_message(message_text):
+    """Sends a formatted message to your private Discord server"""
+    payload = {"content": message_text}
+    try:
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=10)
+        if response.status_code not in [200, 204]:
+            log(f"❌ Discord Error: {response.status_code} - {response.text}")
+    except Exception as e:
+        log(f"❌ Failed to reach Discord: {e}")
+
 def check_website():
     global minutes_since_last_good, down_cameras_dict
     
@@ -37,13 +49,10 @@ def check_website():
     log(f"\n[{current_time}] 🌐 Fetching fresh tokens...")
 
     try:
-        # Use a session so cookies persist between the GET and POST requests
+        # 1. Grab fresh ASP.NET tokens to prevent expiration
         session = requests.Session()
-        
-        # 1. First, GET the page to grab fresh ASP.NET tokens
         get_headers = {"User-Agent": HEADERS["User-Agent"]}
         get_response = session.get(ELECTION_URL, headers=get_headers, timeout=15)
-        
         soup_get = BeautifulSoup(get_response.text, 'html.parser')
         
         viewstate = soup_get.find("input", {"id": "__VIEWSTATE"})
@@ -54,7 +63,7 @@ def check_website():
             log("❌ ERROR: Could not find security tokens on the page!")
             return
 
-        # 2. Build the payload dynamically using the fresh tokens
+        # 2. Build payload
         dynamic_payload = {
             "ScriptManager1": "UpdatePanel2|LinkButton1",
             "__EVENTTARGET": "LinkButton1",
@@ -62,15 +71,14 @@ def check_website():
             "__VIEWSTATE": viewstate["value"],
             "__VIEWSTATEGENERATOR": viewstategenerator["value"],
             "__EVENTVALIDATION": eventvalidation["value"],
-            "camid": "8606919079", # The mobile number
+            "camid": "8606919079",
             "__ASYNCPOST": "true"
         }
 
         log("✅ Tokens secured! Submitting data...")
 
-        # 3. POST the data to get the camera status
+        # 3. Post data and parse cameras
         response = session.post(ELECTION_URL, data=dynamic_payload, headers=HEADERS, timeout=15)
-        
         if response.status_code != 200:
             log(f"Server returned status {response.status_code}. Retrying later.")
             return
@@ -84,19 +92,15 @@ def check_website():
             location = camera.get('data-original-title', 'Unknown Location')
             down_cameras_dict[camera_id] = location
 
+        # 4. Handle Timers
         if len(down_cameras_dict) > 0:
             log(f"🚨 Web check found {len(down_cameras_dict)} down cameras!")
-            minutes_since_last_good = 15
+            minutes_since_last_good = 15 # Reset so 'All Good' fires immediately when fixed
         else:
             if minutes_since_last_good >= 15:
-                log("✅ Sending 'All Good' message to phone...")
-                all_good_message = f"✅ [{current_time}] All Good: 0 cameras are down."
-                
-                # Check exactly what ntfy responds with
-                ntfy_response = requests.post(NTFY_URL, data=all_good_message.encode('utf-8'))
-                if ntfy_response.status_code != 200:
-                    log(f"❌ NTFY REJECTED IT! Error Code: {ntfy_response.status_code} - {ntfy_response.text}")
-                
+                log("✅ Sending 'All Good' message to Discord...")
+                all_good_message = f"✅ **[{current_time}] All Good:** 0 cameras are down. Everything is running smoothly."
+                send_discord_message(all_good_message)
                 minutes_since_last_good = 1
             else:
                 log(f"All good. Silently waiting. (Minute {minutes_since_last_good}/15)")
@@ -107,38 +111,42 @@ def check_website():
 
 def send_bundled_alerts():
     if len(down_cameras_dict) > 0:
-        log(f"➡️ Beaming bundled alert to phone...")
+        log(f"➡️ Beaming bundled alert to Discord...")
         
-        lines = ["🚨 CAMERAS STOPPED 🚨"]
+        lines = ["🚨 **CAMERAS STOPPED** 🚨"]
         for camera_id, location in down_cameras_dict.items():
-            lines.append(f"• {camera_id}: {location}")
+            lines.append(f"• **{camera_id}**: {location}")
             
         alert_message = "\n".join(lines)
-        
-        try:
-            requests.post(NTFY_URL, data=alert_message.encode('utf-8'), timeout=5)
-        except Exception as e:
-            log(f"Failed to send notification: {e}")
+        send_discord_message(alert_message)
 
 def run_monitor():
+    """Background Loop: Checks website every minute. Sends alerts every 30s if down."""
     log("=====================================")
     log("🛡️ Camera Monitoring Service Started")
     log("=====================================")
-    requests.post(NTFY_URL, data="🤖 Camera Monitoring Script has restarted!".encode('utf-8'))
-
-    minutes_down = 0
+    send_discord_message("🤖 **Camera Monitoring Script has restarted successfully!**")
 
     while True:
+        # Minute Mark (00 seconds)
         check_website()
         
         if len(down_cameras_dict) > 0:
-            if minutes_down % 10 == 0:
-                send_bundled_alerts()
-            minutes_down += 1
-        else:
-            minutes_down = 0
+            # If cameras are down, send an alert immediately
+            send_bundled_alerts()
             
-        time.sleep(60)
+            # Wait 30 seconds...
+            time.sleep(30)
+            
+            # Send the 30-second reminder!
+            log(f"\n[{datetime.now().strftime('%I:%M:%S %p')}] ⏱️ 30-Second Reminder!")
+            send_bundled_alerts()
+            
+            # Wait another 30 seconds to complete the 1-minute loop
+            time.sleep(30)
+        else:
+            # If everything is fine, just wait the full 60 seconds quietly
+            time.sleep(60)
 
 # --- FLASK WEB ROUTES ---
 @app.route('/')
@@ -161,6 +169,7 @@ def home():
     """
     return html
 
+# ================= STARTUP =================
 if __name__ == '__main__':
     monitor_thread = threading.Thread(target=run_monitor)
     monitor_thread.daemon = True 
