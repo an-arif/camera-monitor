@@ -91,7 +91,12 @@ def check_website():
             if minutes_since_last_good >= 15:
                 log("✅ Sending 'All Good' message to phone...")
                 all_good_message = f"✅ [{current_time}] All Good: 0 cameras are down."
-                requests.post(NTFY_URL, data=all_good_message.encode('utf-8'))
+                
+                # Check exactly what ntfy responds with
+                ntfy_response = requests.post(NTFY_URL, data=all_good_message.encode('utf-8'))
+                if ntfy_response.status_code != 200:
+                    log(f"❌ NTFY REJECTED IT! Error Code: {ntfy_response.status_code} - {ntfy_response.text}")
+                
                 minutes_since_last_good = 1
             else:
                 log(f"All good. Silently waiting. (Minute {minutes_since_last_good}/15)")
