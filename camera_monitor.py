@@ -49,7 +49,7 @@ def check_website():
     log(f"\n[{current_time}] 🌐 Fetching fresh tokens...")
 
     try:
-        # 1. Grab fresh ASP.NET tokens to prevent expiration
+        # 1. Grab fresh ASP.NET tokens
         session = requests.Session()
         get_headers = {"User-Agent": HEADERS["User-Agent"]}
         get_response = session.get(ELECTION_URL, headers=get_headers, timeout=15)
@@ -95,7 +95,7 @@ def check_website():
         # 4. Handle Timers
         if len(down_cameras_dict) > 0:
             log(f"🚨 Web check found {len(down_cameras_dict)} down cameras!")
-            minutes_since_last_good = 15 # Reset so 'All Good' fires immediately when fixed
+            minutes_since_last_good = 15 
         else:
             if minutes_since_last_good >= 15:
                 log("✅ Sending 'All Good' message to Discord...")
@@ -121,37 +121,39 @@ def send_bundled_alerts():
         send_discord_message(alert_message)
 
 def run_monitor():
-    """Background Loop: Checks website every minute. Sends alerts every 30s if down."""
     log("=====================================")
     log("🛡️ Camera Monitoring Service Started")
     log("=====================================")
     send_discord_message("🤖 **Camera Monitoring Script has restarted successfully!**")
 
     while True:
-        # Minute Mark (00 seconds)
         check_website()
         
         if len(down_cameras_dict) > 0:
-            # If cameras are down, send an alert immediately
             send_bundled_alerts()
-            
-            # Wait 30 seconds...
             time.sleep(30)
-            
-            # Send the 30-second reminder!
             log(f"\n[{datetime.now().strftime('%I:%M:%S %p')}] ⏱️ 30-Second Reminder!")
             send_bundled_alerts()
-            
-            # Wait another 30 seconds to complete the 1-minute loop
             time.sleep(30)
         else:
-            # If everything is fine, just wait the full 60 seconds quietly
             time.sleep(60)
 
 # --- FLASK WEB ROUTES ---
+
+# 1. The Route that handles the button click
+@app.route('/test-alert', methods=['POST'])
+def test_alert():
+    current_time = datetime.now().strftime("%I:%M:%S %p")
+    log(f"\n[{current_time}] 🧪 Manual test triggered from web interface!")
+    send_discord_message("🧪 **TEST ALERT:** The manual test button on your web dashboard was clicked! Notifications are working perfectly.")
+    return "Success", 200
+
+# 2. The Main Page
 @app.route('/')
 def home():
     log_text = "<br>".join(terminal_logs)
+    
+    # We added CSS for the button and a Javascript fetch() command to click it without reloading
     html = f"""
     <html>
         <head>
@@ -159,10 +161,14 @@ def home():
             <meta http-equiv="refresh" content="5">
             <style>
                 body {{ background-color: #121212; color: #00ff00; font-family: monospace; padding: 20px; font-size: 16px; line-height: 1.5; }}
+                .test-btn {{ background-color: #00ff00; color: #121212; border: none; padding: 10px 20px; font-size: 16px; font-weight: bold; cursor: pointer; margin-bottom: 20px; border-radius: 5px; }}
+                .test-btn:hover {{ background-color: #00cc00; }}
+                .test-btn:active {{ background-color: #ffffff; }}
             </style>
         </head>
         <body>
             <h2>Live Monitor Terminal</h2>
+            <button class="test-btn" onclick="fetch('/test-alert', {{method: 'POST'}})">🧪 Send Test Discord Alert</button>
             <div>{log_text}</div>
         </body>
     </html>
@@ -176,4 +182,4 @@ if __name__ == '__main__':
     monitor_thread.start()
     
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port)s
